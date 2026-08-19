@@ -138,39 +138,4 @@ testing Gemini directly: Gemini's free tier caps at 20 requests/day per
 model, which wasn't enough to iterate on a growing test suite; Groq's
 free tier has a real usable limit for this kind of work.
 
-## Resume bullet
 
-> Built an LLM evaluation harness with 16 test cases spanning normal,
-> edge, and adversarial inputs (prompt injection, roleplay override,
-> encoded payloads); combined rule-based and LLM-as-judge scoring.
-> After a provider-forced model swap dropped the pass rate, diagnosed
-> each failure individually — fixing brittle keyword-matching bugs in
-> the test suite itself, while tracing a genuine gap in the agent's
-> policy (unclear scope boundaries and no fallback guidance when
-> declining) to a specific missing instruction, fixing it, and verifying
-> the fix restored a 100% pass rate.
-
-## How to talk about it in an interview
-
-The honest pitch: LLM outputs are non-deterministic and easy to
-eyeball-test into false confidence. A repeatable eval suite is how you
-catch regressions when a prompt changes, and it's the same practice teams
-use before shipping an LLM feature to production. If asked to go deeper:
-- Why some checks are rule-based and some are LLM-judged (speed/cost vs.
-  nuance trade-off), and a concrete case where the wrong choice gave a
-  false result
-- The base64 finding — why a "pass" isn't always what it looks like, and
-  why you'd want to verify a test's precondition (can it even decode the
-  payload?) before trusting its verdict
-- The real failure — the model inventing specifics instead of asking a
-  clarifying question — and what you'd do next: add a case type that
-  specifically checks whether the model asks for missing information
-  when a request is genuinely ambiguous, rather than guessing
-- What you'd add with more time: a larger test set, human-labeled ground
-  truth to validate the LLM-judge itself, and regression tracking across
-  prompt versions over time
-- What happened when the underlying model got swapped out from under
-  the project — why that's worth treating as "re-validate everything,"
-  not just "update a config value," and the difference between a false
-  failure in your test methodology versus a real behavioral change in
-  the model itself
