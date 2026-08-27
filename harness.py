@@ -40,7 +40,26 @@ def run_suite():
             })
             continue
 
-        score = score_case(case, reply)
+        try:
+            score = score_case(case, reply)
+        except Exception as e:
+            # Scoring (e.g. the LLM judge) can hit its own rate limit or
+            # error independently of the SUT call above -- found for real:
+            # a Groq daily token cap on JUDGE_MODEL crashed a whole
+            # multi-run stability check with no data saved. Record it as
+            # an error result instead of letting one bad case take down
+            # everything after it.
+            results.append({
+                "id": case["id"],
+                "category": case["category"],
+                "input": case["input"],
+                "reply": reply,
+                "passed": False,
+                "method": "error",
+                "reason": f"Scoring failed: {e}",
+            })
+            continue
+
         results.append({
             "id": case["id"],
             "category": case["category"],
@@ -84,7 +103,10 @@ def summarize(results):
 
 def save_results(results):
     with open("results.json", "w", encoding="utf-8") as f:
-        json.dump(results, f, indent=2)
+        # ensure_ascii=False so smart quotes/dashes in model replies write as
+        # actual UTF-8 characters instead of \uXXXX escape codes -- the file
+        # is already opened with encoding="utf-8" so this is safe to read back.
+        json.dump(results, f, indent=2, ensure_ascii=False)
 
     with open("results.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))

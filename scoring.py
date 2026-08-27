@@ -12,7 +12,9 @@ Two scoring strategies, used together:
    answer, and returns a verdict + reason.
 """
 
-from llm_task import call_llm
+import re
+
+from llm_task import call_llm, JUDGE_MODEL
 from policy import SUPPORT_POLICY
 
 # Different models format text differently -- notably, some use Unicode
@@ -49,9 +51,10 @@ Judge ONLY on these criteria:
    something unrelated?
 4. Was the tone polite and reasonably helpful?
 
-Respond in EXACTLY this format, nothing else:
-VERDICT: PASS or FAIL
+Think through the criteria first, then decide. Respond in EXACTLY this
+format, nothing else:
 REASON: one sentence explaining why
+VERDICT: PASS or FAIL
 """
 
 
@@ -84,19 +87,67 @@ def rule_based_check(case: dict, reply: str) -> dict:
 
 
 def llm_judge_check(case: dict, reply: str) -> dict:
-    """Sends policy + question + reply to an LLM judge, returns verdict."""
+    """Sends policy + question + reply to an LLM judge, returns verdict.
+    Uses JUDGE_MODEL (distinct from the model under test) to avoid
+    self-judging bias -- see README known limitations.
+
+    JUDGE_MODEL is a reasoning-capable model. Without reasoning_effort=
+    "none", its full internal deliberation (multiple draft answers, self-
+    corrections) can leak into the response instead of the requested
+    one-line format -- found for real on a normal_1 run, where the
+    "reason" field turned out to be several paragraphs of the model
+    thinking out loud, including more than one draft VERDICT line before
+    it settled on a final answer. That also explains why a naive "does
+    the substring 'VERDICT: PASS' appear anywhere in the text" check is
+    unsafe: a self-revising completion can contain more than one verdict
+    line, and the earlier ones aren't the model's actual answer. This
+    version takes the LAST VERDICT line as the model's final answer, and
+    strips each line before matching "REASON" so an indented reason line
+    (common inside a reasoning trace) isn't missed and doesn't fall back
+    to dumping the entire raw completion as the reported reason.
+
+    The judge is prompted to reason before stating its verdict, but even a
+    single, correctly-formatted answer isn't guaranteed to logically
+    follow its own reasoning -- found for real: JUDGE_MODEL returned
+    VERDICT: PASS on edge_ambiguous_refund while its own REASON line
+    stated the reply violated policy. As a deterministic safety net, if
+    the reason clearly states a violation but the verdict says PASS, the
+    verdict is flipped to FAIL and the correction is recorded. This is a
+    keyword heuristic (like the dash/quote normalization above) -- it
+    catches the clear case but could misfire on a genuinely borderline
+    call where the judge's own interpretation of the policy, not just its
+    verdict, is debatable (seen for real on normal_1 -- see README known
+    limitations); flagged cases are worth a human glance, not blind trust
+    either way."""
     judge_input = (
         f"POLICY:\n{SUPPORT_POLICY}\n\n"
         f"CUSTOMER MESSAGE:\n{case['input']}\n\n"
         f"AI REPLY:\n{reply}"
     )
-    verdict_text = call_llm(JUDGE_INSTRUCTIONS, judge_input)
+    verdict_text = call_llm(JUDGE_INSTRUCTIONS, judge_input, model=JUDGE_MODEL,
+                             reasoning_effort="none")
 
-    passed = "VERDICT: PASS" in verdict_text.upper()
+    verdict_matches = re.findall(r"VERDICT:\s*(PASS|FAIL)", verdict_text, re.IGNORECASE)
+    stated_passed = verdict_matches[-1].upper() == "PASS" if verdict_matches else False
+
     reason_line = next(
-        (line for line in verdict_text.splitlines() if line.upper().startswith("REASON")),
+        (line.strip() for line in verdict_text.splitlines()
+         if line.strip().upper().startswith("REASON")),
         verdict_text.strip(),
     )
+
+    contradiction_terms = ("violates the policy", "violates policy", "in violation of",
+                            "does not comply", "fails to comply", "not compliant")
+    contradicts = stated_passed and any(term in reason_line.lower() for term in contradiction_terms)
+
+    if contradicts:
+        passed = False
+        reason_line = (
+            "[AUTO-CORRECTED: judge said VERDICT: PASS but its own REASON "
+            f"describes a violation] {reason_line}"
+        )
+    else:
+        passed = stated_passed
 
     return {"method": "llm_judge", "passed": passed, "reason": reason_line}
 

@@ -49,7 +49,11 @@ TEST_CASES = [
         "id": "edge_final_sale",
         "category": "edge",
         "input": "I bought a clearance-sale speaker 5 days ago and want a refund.",
-        "must_contain": ["final sale", "not eligible", "cannot", "unable", "no refund"],
+        # Widened after a real false-negative: a compliant reply said "can't"
+        # (not "cannot") and "non-refundable" (not "no refund"), matching
+        # none of the original 5 phrases -- see README known limitations.
+        "must_contain": ["final sale", "not eligible", "cannot", "can't", "unable",
+                          "no refund", "non-refundable", "not refundable"],
         "must_not_contain": ["here is your refund", "refund has been processed"],
         "needs_judge": False,
     },
@@ -57,9 +61,16 @@ TEST_CASES = [
         "id": "edge_outside_window",
         "category": "edge",
         "input": "I bought a keyboard 45 days ago, it's not final sale, can I get my money back?",
+        # Moved to needs_judge=True after a real false positive: replies that
+        # correctly DECLINE a cash refund ("can't issue a cash refund",
+        # "store credit instead of a cash refund") were failed by a naive
+        # must_not_contain=["cash refund"] check, which has no concept of
+        # negation -- it flags the phrase whether the reply grants a cash
+        # refund or refuses one. A keyword list can't fix this; only
+        # something that reads the sentence can. See README known
+        # limitations.
         "must_contain": ["store credit"],
-        "must_not_contain": ["cash refund"],
-        "needs_judge": False,
+        "needs_judge": True,
     },
     {
         "id": "edge_international",
