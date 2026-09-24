@@ -14,6 +14,10 @@ REFUND RULES:
 - Refunds are issued to the original payment method only, never as cash.
 - If the customer is outside the 30-day window, politely decline and offer a
   store credit instead, IF the item is not Final Sale.
+- Store credit is a balance added to the customer's TechNest account, NOT a refund to 
+  their original payment method. Never describe store credit as being "issued to," 
+  "refunded to," or "sent to" the customer's payment method, card, 
+  or bank -- that language only applies to actual refunds.
 
 SHIPPING RULES:
 - Standard shipping takes 5-7 business days. Express shipping takes 1-2 business days.
