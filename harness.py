@@ -1,30 +1,40 @@
 """
 Run this file to execute the full eval suite:
 
-    export GEMINI_API_KEY="your-key-here"
+    export GROQ_API_KEY="your-key-here"
     python harness.py
 
 It will:
   1. Send every case in test_cases.py through the support agent (llm_task.py)
   2. Score each reply (scoring.py)
-  3. Print a per-category pass rate summary
-  4. Save full results to results.csv and results.json for your resume/portfolio
+  3. Print a per-category, per-scoring-method pass rate summary (metrics.py)
+  4. Save results.json/results.csv, tagged with the dataset version + content
+     fingerprint (test_cases.py) so regression.py knows exactly what dataset
+     a given result belongs to
+  5. Append one entry to metrics_history.json so category pass rates are
+     trackable across runs over time, not just visible one run at a time
 """
 
 import csv
 import json
 import time
-from collections import defaultdict
 
 from llm_task import support_agent_reply
-from test_cases import TEST_CASES
+from test_cases import TEST_CASES, DATASET_VERSION, dataset_fingerprint
 from scoring import score_case
+from metrics import compute_metrics, print_metrics, append_metrics_history
 
 
-def run_suite():
+def run_cases(cases: list) -> list:
+    """Runs any list of case dicts (the full TEST_CASES suite, or any other
+    list shaped the same way -- e.g. generated variants from
+    generate_adversarial.py) through the SUT + scorer. This is the actual
+    execution path referred to as 'the harness' elsewhere in this repo:
+    factored out so other tooling can run cases through the exact same
+    pipeline instead of re-implementing it."""
     results = []
 
-    for case in TEST_CASES:
+    for case in cases:
         print(f"Running case: {case['id']} ({case['category']})...")
         try:
             reply = support_agent_reply(case["input"])
@@ -76,22 +86,21 @@ def run_suite():
     return results
 
 
+def run_suite():
+    """Runs the curated suite specifically (TEST_CASES). Kept as its own
+    function -- rather than inlining run_cases(TEST_CASES) everywhere --
+    since stability_check.py and regression.py both import run_suite()
+    by name."""
+    return run_cases(TEST_CASES)
+
+
 def summarize(results):
-    by_category = defaultdict(lambda: {"pass": 0, "total": 0})
-    for r in results:
-        by_category[r["category"]]["total"] += 1
-        if r["passed"]:
-            by_category[r["category"]]["pass"] += 1
-
-    print("\n=== EVAL REPORT ===")
-    total_pass = sum(v["pass"] for v in by_category.values())
-    total_cases = sum(v["total"] for v in by_category.values())
-    print(f"Overall: {total_pass}/{total_cases} passed "
-          f"({100 * total_pass / total_cases:.0f}%)\n")
-
-    for category, counts in by_category.items():
-        rate = 100 * counts["pass"] / counts["total"]
-        print(f"  {category:<12} {counts['pass']}/{counts['total']} passed ({rate:.0f}%)")
+    """Computes and prints the metrics summary, then the failure list.
+    Kept under its original name for backward compatibility with anything
+    importing it; now returns the metrics dict instead of nothing, so a
+    caller (e.g. regression.py) can reuse it without recomputing."""
+    metrics = compute_metrics(results)
+    print_metrics(metrics)
 
     print("\nFailures:")
     failures = [r for r in results if not r["passed"]]
@@ -100,20 +109,32 @@ def summarize(results):
     for f in failures:
         print(f"  - {f['id']}: {f['reason']}")
 
+    return metrics
+
 
 def save_results(results):
+    meta = {
+        "dataset_version": DATASET_VERSION,
+        "dataset_fingerprint": dataset_fingerprint(),
+    }
+    metrics = compute_metrics(results)
+
     with open("results.json", "w", encoding="utf-8") as f:
         # ensure_ascii=False so smart quotes/dashes in model replies write as
         # actual UTF-8 characters instead of \uXXXX escape codes -- the file
         # is already opened with encoding="utf-8" so this is safe to read back.
-        json.dump(results, f, indent=2, ensure_ascii=False)
+        json.dump({"meta": meta, "results": results}, f, indent=2, ensure_ascii=False)
 
     with open("results.csv", "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=list(results[0].keys()))
         writer.writeheader()
         writer.writerows(results)
 
-    print("\nSaved results.json and results.csv")
+    append_metrics_history(metrics, meta["dataset_version"], meta["dataset_fingerprint"])
+
+    print("\nSaved results.json and results.csv (dataset version "
+          f"{meta['dataset_version']} / {meta['dataset_fingerprint']}), "
+          "appended a summary to metrics_history.json")
 
 
 if __name__ == "__main__":

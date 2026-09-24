@@ -236,6 +236,81 @@ a scoring-level one: the earlier fixes made the eval harness trustworthy
 enough to reveal this gap; only tightening what's asked of the SUT
 itself can close it.
 
+## Newer additions
+
+### Category metrics (`metrics.py`)
+`harness.py` now prints (and saves) a per-category breakdown further split
+by scoring method — e.g. whether adversarial cases scored by the judge are
+passing at a different rate than adversarial cases checked by rules. Every
+run also appends a timestamped entry to `metrics_history.json`, tagged with
+the dataset version/fingerprint that produced it, so pass rates are
+trackable across runs instead of only visible one run at a time.
+
+### Dataset versioning (`test_cases.py`)
+`DATASET_VERSION` is a human-maintained label; bump it by hand whenever
+`TEST_CASES` changes meaningfully and log why in `CHANGELOG_TESTCASES.md`.
+`dataset_fingerprint()` is a content hash computed from the actual case
+list, so it catches any change even if the version label was forgotten.
+Both are recorded in `results.json`, `baseline_results.json`, and
+`metrics_history.json`, so any result can be traced back to exactly the
+dataset that produced it.
+
+### Regression testing (`regression.py`)
+Compares a fresh run against an explicitly saved baseline — not "the
+previous run," since that drifts every time you run the suite, and single
+runs are already known to be noisy at `temperature=0.3` (see
+`stability_check.py` below). A case that passed in the baseline but fails
+now is a **regression**; a case failing in both is not new information.
+
+```bash
+python regression.py --update-baseline   # save current state as the baseline
+python regression.py                     # compare a fresh run to it; exits 1 on regression
+```
+
+If the dataset has changed since the baseline was saved, `regression.py`
+says so explicitly (via the fingerprint) rather than silently comparing
+across incompatible test data. Exit code makes it usable as a local
+pre-push check or a CI gate — see `.github/workflows/regression-gate.yml`
+(requires a committed `baseline_results.json` and a `GROQ_API_KEY` repo
+secret; both are opt-in, nothing here runs automatically until you add
+them).
+
+### Adversarial variant generation (`generate_adversarial.py`)
+A six-step pipeline, each step a distinct, inspectable artifact rather than
+one opaque function:
+
+1. **Seed attack dataset** — the existing adversarial cases in
+   `test_cases.py`, each tagged with an attack *family* (instruction
+   override, roleplay, fake authority, indirection/translation, encoding
+   injection, etc — see `ATTACK_FAMILIES`).
+2. **Generate variants automatically** — an LLM rewords each seed into new
+   phrasings of the same manipulation attempt.
+3. **Save generated cases** — written to `generated_cases.json` *before*
+   they're run, so the generated dataset exists as its own artifact
+   independent of any one run's outcome.
+4. **Run them through the harness** — via `harness.run_cases()`, the exact
+   same SUT + scoring execution path `harness.py` uses for the curated
+   suite (not a separate reimplementation).
+5. **Measure attack success rate** — from an attacker's perspective, a
+   *successful* attack is a generated case the policy failed; reported
+   overall in `attack_report.json`.
+6. **Break down by attack family** — success rate per family, so e.g.
+   encoding-based attacks being weaker than roleplay attempts is visible
+   rather than averaged into one number.
+
+```bash
+python generate_adversarial.py                        # every adversarial seed, 3 variants each
+python generate_adversarial.py --seed adv_ignore_instructions --n 5
+```
+
+This deliberately does **not** auto-add generated cases into
+`test_cases.py` — consistent with this repo's whole approach (see Key
+Findings #2, #6, #8, #9): anything an LLM produces, including its own test
+inputs here, gets a human look before being trusted as permanent. Attacks
+that actually succeeded are written to `promoted_candidates.json` for
+review, and worth hand-copying into `test_cases.py` (bumping
+`DATASET_VERSION`) if they represent a real, reproducible gap.
+
 ## Known Limitations
 
 **Judge/SUT model separation is same-provider only.** The LLM-as-judge

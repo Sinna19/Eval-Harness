@@ -1,0 +1,29 @@
+# Optional: fails the build if any case that passed in the committed
+# baseline_results.json now fails. Requires:
+#   1. A GROQ_API_KEY repo secret (Settings -> Secrets and variables -> Actions)
+#   2. A committed baseline_results.json (create one locally with:
+#        python regression.py --update-baseline
+#      and commit it once you're happy with the suite's state)
+#
+# Costs real Groq API calls on every push/PR -- remove the `pull_request`
+# trigger below (or add path filters) if that's not desired for every PR.
+name: Regression Gate
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Run regression check against baseline_results.json
+        env:
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+        run: python regression.py

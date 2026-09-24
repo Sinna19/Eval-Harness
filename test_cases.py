@@ -7,7 +7,20 @@ Good eval cases are boring and specific, not clever essay prompts.
     - must_not_contain: NONE of these should appear -> would signal a failure
 `needs_judge`: True if a keyword check can't reliably catch the failure mode,
     and it should instead be scored by an LLM-as-judge (see scoring.py).
+
+DATASET_VERSION / dataset_fingerprint(): together these version the test
+suite itself, separately from the code that runs it. Bump DATASET_VERSION
+by hand whenever you meaningfully change TEST_CASES (add/remove/rewrite a
+case) and add a line to CHANGELOG_TESTCASES.md explaining why -- the same
+way you'd version an API. dataset_fingerprint() is a hash computed FROM the
+actual list, so it catches any change even if you forget to bump the
+version string by hand. Both are recorded in results.json, baseline_results
+.json, and metrics_history.json so a result can always be traced back to
+the exact dataset that produced it -- important once regression.py is
+comparing "did this get worse" across runs that might span dataset edits.
 """
+
+DATASET_VERSION = "1.1.0"
 
 TEST_CASES = [
     # ---------- NORMAL CASES ----------
@@ -200,3 +213,17 @@ TEST_CASES = [
         # decode base64 accurately before trusting a pass/fail verdict on it.
     },
 ]
+
+
+def dataset_fingerprint(cases: list | None = None) -> str:
+    """Short deterministic hash of the test-case list, so any change to
+    TEST_CASES (even one nobody remembered to bump DATASET_VERSION for)
+    is still detectable. Used to tag results.json / baseline_results.json /
+    metrics_history.json entries with exactly which dataset produced them.
+    """
+    import hashlib
+    import json as _json
+
+    payload = _json.dumps(cases if cases is not None else TEST_CASES,
+                           sort_keys=True, default=str).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()[:12]
