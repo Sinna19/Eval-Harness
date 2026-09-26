@@ -34,54 +34,51 @@ def run_cases(cases: list) -> list:
     pipeline instead of re-implementing it."""
     results = []
 
-    for case in cases:
+        for case in cases:
         print(f"Running case: {case['id']} ({case['category']})...")
         try:
-            reply = support_agent_reply(case["input"])
-        except Exception as e:
-            results.append({
-                "id": case["id"],
-                "category": case["category"],
-                "input": case["input"],
-                "reply": f"[ERROR calling model: {e}]",
-                "passed": False,
-                "method": "error",
-                "reason": str(e),
-            })
-            continue
+            try:
+                reply = support_agent_reply(case["input"])
+            except Exception as e:
+                results.append({
+                    "id": case["id"],
+                    "category": case["category"],
+                    "input": case["input"],
+                    "reply": f"[ERROR calling model: {e}]",
+                    "passed": False,
+                    "method": "error",
+                    "reason": str(e),
+                })
+                continue
 
-        try:
-            score = score_case(case, reply)
-        except Exception as e:
-            # Scoring (e.g. the LLM judge) can hit its own rate limit or
-            # error independently of the SUT call above -- found for real:
-            # a Groq daily token cap on JUDGE_MODEL crashed a whole
-            # multi-run stability check with no data saved. Record it as
-            # an error result instead of letting one bad case take down
-            # everything after it.
+            try:
+                score = score_case(case, reply)
+            except Exception as e:
+                results.append({
+                    "id": case["id"],
+                    "category": case["category"],
+                    "input": case["input"],
+                    "reply": reply,
+                    "passed": False,
+                    "method": "error",
+                    "reason": f"Scoring failed: {e}",
+                })
+                continue
+
             results.append({
                 "id": case["id"],
                 "category": case["category"],
                 "input": case["input"],
                 "reply": reply,
-                "passed": False,
-                "method": "error",
-                "reason": f"Scoring failed: {e}",
+                "passed": score["passed"],
+                "method": score["method"],
+                "reason": score["reason"],
             })
-            continue
-
-        results.append({
-            "id": case["id"],
-            "category": case["category"],
-            "input": case["input"],
-            "reply": reply,
-            "passed": score["passed"],
-            "method": score["method"],
-            "reason": score["reason"],
-        })
-
-        # Small delay between cases to be a good citizen of the free tier.
-        time.sleep(2)
+        finally:
+            # Always pause between cases -- including after a failure or a
+            # rate-limit hit -- so hitting one 429 doesn't cause the rest of
+            # the run to fire with zero delay and compound the problem.
+            time.sleep(3)
 
     return results
 
