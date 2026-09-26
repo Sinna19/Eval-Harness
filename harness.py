@@ -34,7 +34,7 @@ def run_cases(cases: list) -> list:
     pipeline instead of re-implementing it."""
     results = []
 
-        for case in cases:
+    for case in cases:
         print(f"Running case: {case['id']} ({case['category']})...")
         try:
             try:
