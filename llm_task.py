@@ -3,10 +3,6 @@ This is the "system under test" — the actual AI feature we're evaluating.
 It's kept deliberately simple: one function that takes a customer message
 and returns the assistant's reply, using the policy as its system prompt.
 
-Uses Groq's API (OpenAI-compatible, running Llama 3.1). Chosen over Gemini
-after testing both: Gemini's free tier caps at 20 requests/DAY per model,
-which isn't enough to iterate on a growing test suite. Groq's free tier has
-a real usable limit for this kind of work.
 
 Swap `call_llm` for any other provider without touching the harness code,
 as long as it still returns a plain string.
@@ -30,7 +26,7 @@ GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
 # model list changes over time -- check https://console.groq.com/docs/models
 # or GET /openai/v1/models if either of these 404s.
 SUT_MODEL = os.environ.get("SUT_MODEL", "openai/gpt-oss-20b")
-JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "qwen/qwen3.6-27b")
+JUDGE_MODEL = os.environ.get("JUDGE_MODEL", "qwen/qwen3.8-27b")
 
 MAX_RETRIES = 5
 INITIAL_BACKOFF_SECONDS = 10
@@ -41,7 +37,7 @@ def call_llm(system_prompt: str, user_message: str, model: str = SUT_MODEL,
     """Calls Groq's chat completions endpoint. Returns the reply text.
     Retries with backoff if rate-limited (HTTP 429).
 
-    reasoning_effort: for reasoning-capable models (e.g. qwen3.6-27b),
+    reasoning_effort: for reasoning-capable models (e.g. qwen/qwen3.8-27b),
     pass "none" to disable chain-of-thought so only the final answer comes
     back. Without this, a reasoning model's full internal deliberation --
     including draft answers it later revises -- can leak into the
