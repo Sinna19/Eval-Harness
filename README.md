@@ -11,6 +11,8 @@ initially caught two real gaps in the agent's policy after a
 provider-forced model swap — see [Key Findings](#key-findings) below,
 especially finding #4, for the full before/after.
 
+[![Regression Gate](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml/badge.svg)](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml)
+
 ## What's being tested
 
 `llm_task.py` is the system under test: a support agent for a fictional
