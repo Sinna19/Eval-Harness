@@ -1,3 +1,5 @@
+[![Regression Gate](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml/badge.svg)](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml)
+
 # AI Eval Harness — Policy-Bound Support Agent
 
 A small evaluation framework for an LLM-based customer support agent.
@@ -6,10 +8,14 @@ output, this runs a repeatable suite of 16 test cases against it and
 produces a pass/fail report — the same core practice teams use before
 shipping an LLM feature to real users.
 
-**Result: 16/16 passed (100%) after a documented fix.** The suite
-initially caught two real gaps in the agent's policy after a
-provider-forced model swap — see [Key Findings](#key-findings) below,
-especially finding #4, for the full before/after.
+**Result: 15–16/16 passing, depending on run-to-run model variance.**
+The suite runs against a live model at `temperature=0.3`, so a single
+run's score is a sample, not a fixed fact — `regression.py` and
+`stability_check.py` exist specifically because trusting one run's
+number here would be a mistake. The suite has also caught and driven
+fixes for several real, reproducible gaps in the agent's policy — see
+[Key Findings](#key-findings) below (especially #4, #12, and #13) for
+the full before/after on each.
 
 ## What's being tested
 
@@ -41,8 +47,8 @@ swapping providers only touches this one file.
 
 ## Key Findings
 
-Three real things this suite caught during development — kept in as
-evidence of the process, not cleaned away:
+Real things this suite caught during development — kept in as evidence
+of the process, not cleaned away:
 
 **1. Rule-based checks gave false failures on valid refusals.**
 Early runs flagged the model as failing when it said *"I can't fulfill
@@ -181,13 +187,13 @@ change, rather than trusting one green run.
 
 **8. The judge's chain-of-thought was leaking into its answer, which was
 likely the real root cause behind Findings #6 and part of the flakiness in
-#7.** `JUDGE_MODEL` (`qwen/qwen3.6-27b`) is a reasoning-capable model.
-Without telling Groq to suppress that, one `normal_1` run's reported
-`reason` turned out to be several paragraphs of the model visibly
-thinking out loud -- drafting an answer, second-guessing a minor policy
-point, restating PASS, reconsidering again -- instead of the requested
-one-line `REASON:` / `VERDICT:` format. Two consequences followed
-directly from this:
+#7.** `JUDGE_MODEL` (`qwen/qwen3.6-27b` at the time) is a reasoning-capable
+model. Without telling Groq to suppress that, one `normal_1` run's
+reported `reason` turned out to be several paragraphs of the model
+visibly thinking out loud -- drafting an answer, second-guessing a minor
+policy point, restating PASS, reconsidering again -- instead of the
+requested one-line `REASON:` / `VERDICT:` format. Two consequences
+followed directly from this:
 
 - The reason-line parser only matched a line that literally started with
   "REASON" -- but inside a reasoning trace that line is usually indented,
@@ -206,14 +212,10 @@ with itself), not a one-off token-level slip as originally assumed.
 
 Fix: `call_llm` now accepts a `reasoning_effort` parameter, and the judge
 call passes `reasoning_effort="none"` so Groq returns only the final
-answer for `qwen/qwen3.6-27b`. The parser was also hardened regardless:
-it takes the *last* `VERDICT:` occurrence (not "does PASS appear
-anywhere"), and strips each line before checking for a `REASON:` prefix
-so an indented line is still found. Worth re-running `stability_check.py`
-after this fix -- if the earlier flakiness was substantially caused by
-this rather than genuine SUT wording variance, it should mostly
-disappear now that the judge's raw completion matches what it was
-actually asked to produce.
+answer. The parser was also hardened regardless: it takes the *last*
+`VERDICT:` occurrence (not "does PASS appear anywhere"), and strips each
+line before checking for a `REASON:` prefix so an indented line is still
+found.
 
 **9. `edge_ambiguous_refund` kept failing across runs for different
 specific reasons, which was the real signal.** After the scoring-layer
@@ -235,6 +237,88 @@ procedure details like shipping labels. This is a policy-level fix, not
 a scoring-level one: the earlier fixes made the eval harness trustworthy
 enough to reveal this gap; only tightening what's asked of the SUT
 itself can close it.
+
+**10. A "green" CI regression check was passing for the worst possible
+reason: it never actually called the model.** After wiring up
+`regression.py` as a GitHub Actions gate, the first run finished in 15
+seconds and reported success -- implausibly fast for 16 real API calls,
+each judge-scored case adding its own round trip. The cause: `baseline_
+results.json` had been generated locally without `GROQ_API_KEY` set in
+that shell session, so every `call_llm` call raised immediately before
+any network request, and all 16 cases were recorded as `passed: false`.
+CI, run without the secret configured either, produced the same all-
+`false` result -- and "nothing that passed before is now failing"
+was technically true, because nothing had ever passed. The gate was
+green because there was nothing left to fail. Caught only by treating
+an implausible run duration as a reason to distrust a passing result,
+not just an odd detail to shrug off. Fix: regenerated the baseline with
+the key actually set, and added `GROQ_API_KEY` as a GitHub Actions
+secret so CI exercises the real model. General lesson: a regression
+gate's "no regressions found" and "the suite meaningfully ran" are two
+different claims, and only one of them is checked by an exit code.
+
+**11. A judge-model fix validated with an environment variable didn't
+actually ship, because the permanent default was never changed.** Groq
+deprecated `qwen/qwen3.6-27b` a second time, replacing it with
+`qwen/qwen3.8-27b` (confirmed via `GET /openai/v1/models`, not guessed).
+The first fix attempt set `JUDGE_MODEL` as a session environment
+variable, confirmed a clean run, and was treated as resolved. A later
+run in a fresh terminal -- where that session variable no longer
+existed -- silently fell back to `llm_task.py`'s hardcoded default,
+which was still the deprecated model id, reproducing the exact same
+404s that had supposedly already been fixed. Fix: changed the actual
+default in `llm_task.py` instead of relying on an environment override,
+and re-verified specifically *without* the env var set, so the fix's
+validation matched how it would actually run for anyone else cloning
+the repo.
+
+**12. Two more real, reproducible policy gaps, once infrastructure noise
+was cleared out of the way.** With the judge model and CI both fixed,
+two genuine (if intermittent, given `temperature=0.3`) violations
+surfaced:
+- `edge_outside_window`: the reply correctly identified store credit as
+  the outcome, then contradicted itself by saying the credit would be
+  "issued to your original payment method" -- which isn't how store
+  credit works. Traced to `policy.py` having two adjacent rules (refunds
+  go to the original payment method; store credit is offered instead
+  outside the refund window) with nothing telling the model these are
+  two different mechanisms, so it borrowed phrasing from one rule to
+  describe the other. Fix: added an explicit line stating store credit
+  is a balance added to the account, not a refund, and forbidding
+  "issued to / refunded to / sent to [payment method]" language for it.
+- `normal_1` and `edge_ambiguous_refund` separately failed (in different
+  runs) because the SUT claimed it could personally "initiate" a refund,
+  and invented a "you can keep it for now" procedural detail for a
+  damaged-item return. `policy.py` already had a rule against inventing
+  procedural details, but it was illustrated only with a damaged-item
+  example, and the SUT appears to have treated the prohibition as scoped
+  to that one scenario. Fix: broadened the same rule to explicitly cover
+  every refund/credit request, and added an explicit ban on claiming to
+  personally execute a transaction ("initiate," "process," "issue").
+
+**13. A CI failure that looked identical to a missing-secret failure was
+actually a per-minute rate limit -- confirmed against Groq's published
+limits, not guessed at.** After fixing Finding #11, a CI run failed with
+10 of 16 judge-scored cases suddenly false, despite `GROQ_API_KEY` being
+correctly configured and the run taking over a minute (too long to be an
+instant auth failure). The log showed `Rate limited, waiting 10s before
+retry...`. Checking Groq's actual rate-limits documentation
+(`console.groq.com/docs/rate-limits`) confirmed both `openai/gpt-oss-20b`
+and `qwen/qwen3.8-27b` allow 1,000 requests/day but only **30 requests
+per minute**, each tracked independently per model. A full run fires
+roughly 27 requests (16 SUT calls + 11 judge calls) in quick succession;
+running `python harness.py` locally and pushing immediately after put a
+local run and a CI run on the same key inside the same 60-second window,
+comfortably exceeding the per-minute cap even though the daily budget
+was barely touched. A design gap made it worse: `harness.py` only paused
+between cases *after* a fully successful one, so the moment a single
+call got rate-limited, every remaining case fired with zero delay,
+cascading the failure through the rest of the run instead of backing
+off. Fix: moved the inter-case delay into a `finally` block so it runs
+after every case regardless of outcome (pass, fail, or rate-limit), and
+increased it slightly (2s -> 3s) for margin. Not a full guarantee against
+future rate-limit hits -- particularly when testing locally right before
+a push -- but it stops one hit from compounding into the rest of the run.
 
 ## Newer additions
 
@@ -270,10 +354,11 @@ python regression.py                     # compare a fresh run to it; exits 1 on
 If the dataset has changed since the baseline was saved, `regression.py`
 says so explicitly (via the fingerprint) rather than silently comparing
 across incompatible test data. Exit code makes it usable as a local
-pre-push check or a CI gate — see `.github/workflows/regression-gate.yml`
-(requires a committed `baseline_results.json` and a `GROQ_API_KEY` repo
-secret; both are opt-in, nothing here runs automatically until you add
-them).
+pre-push check or a CI gate — see `.github/workflows/regression-gate.yml`,
+live in this repo's Actions tab (see badge above). A baseline built or
+compared without `GROQ_API_KEY` set will look identical to a healthy run
+right up until you check its actual timing or contents — see Key Finding
+#10 before trusting a green run you haven't independently sanity-checked.
 
 ### Adversarial variant generation (`generate_adversarial.py`)
 A six-step pipeline, each step a distinct, inspectable artifact rather than
@@ -314,7 +399,7 @@ review, and worth hand-copying into `test_cases.py` (bumping
 ## Known Limitations
 
 **Judge/SUT model separation is same-provider only.** The LLM-as-judge
-(`JUDGE_MODEL`, `qwen/qwen3.6-27b`) is a different model, from a different
+(`JUDGE_MODEL`, `qwen/qwen3.8-27b`) is a different model, from a different
 developer/family, than the system under test (`SUT_MODEL`,
 `openai/gpt-oss-20b`), which removes the most direct form of self-judging
 bias -- a model grading its own output tends to rate it more favorably
@@ -324,11 +409,22 @@ infra or safety tuning quirks) aren't ruled out. A stronger setup would
 use a judge from a genuinely different provider (e.g. Gemini, or a
 direct OpenAI/Anthropic call) so judge and SUT don't share any pipeline.
 
-Also note: Groq's hosted model lineup changes over time (this project has
-already been through one provider-forced deprecation -- see Key Finding
-#4). If `SUT_MODEL` or `JUDGE_MODEL` ever 404s, check the current list with
+**Groq's hosted model lineup changes over time -- this has already hit
+this project twice, not once.** `llama-3.1-8b-instant` was deprecated
+mid-project (Key Finding #4), and `qwen/qwen3.6-27b` was deprecated again
+later (Key Finding #11). If `SUT_MODEL` or `JUDGE_MODEL` ever 404s, don't
+guess a replacement -- check the current list with
 `GET https://api.groq.com/openai/v1/models` (using your `GROQ_API_KEY`)
-and update the model string.
+and update the model string based on what's actually still active.
+
+**Rate limits are per-minute, not just per-day, and per-model.** Per
+Groq's published limits, both `SUT_MODEL` and `JUDGE_MODEL` currently
+allow 1,000 requests/day but only 30 requests/minute each (Key Finding
+#13). A full suite run is ~27 requests; running it locally right before
+pushing (which triggers the same suite again in CI, on the same key)
+can exceed the per-minute cap even with a healthy daily budget left.
+`harness.py` pauses between every case (`finally: time.sleep(3)`,
+regardless of outcome) to reduce -- not eliminate -- this risk.
 
 ## How to run it
 
@@ -337,7 +433,7 @@ pip install -r requirements.txt
 export GROQ_API_KEY="your-key-here"   # https://console.groq.com/keys
 # Optional overrides (defaults shown):
 # export SUT_MODEL="openai/gpt-oss-20b"
-# export JUDGE_MODEL="qwen/qwen3.6-27b"
+# export JUDGE_MODEL="qwen/qwen3.8-27b"
 python harness.py
 ```
 
@@ -362,6 +458,8 @@ consistent as worth a closer look rather than a passing grade.
 
 Needs internet access and your own free Groq key. Groq was chosen after
 testing Gemini directly: Gemini's free tier caps at 20 requests/day per
-model, which wasn't enough to iterate on a growing test suite; Groq's
-free tier has a real usable limit for this kind of work.
-
+model, which wasn't enough to iterate on a growing test suite. Groq's
+free tier is more generous in absolute daily volume (1,000 requests/day
+per model) but caps at 30 requests/minute per model (see Known
+Limitations) -- run `stability_check.py` with that in mind, ideally not
+back-to-back with a CI push on the same key.
