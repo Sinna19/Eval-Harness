@@ -17,6 +17,8 @@ fixes for several real, reproducible gaps in the agent's policy — see
 [Key Findings](#key-findings) below (especially #4, #12, and #13) for
 the full before/after on each.
 
+[![Regression Gate](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml/badge.svg)](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml)
+
 ## What's being tested
 
 `llm_task.py` is the system under test: a support agent for a fictional
