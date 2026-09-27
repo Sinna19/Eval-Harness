@@ -1,4 +1,4 @@
-[![Regression Gate](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml/badge.svg)](https://github.com/Sinna19/Eval-Harness/actions/workflows/regression-gate.yml)
+
 
 # AI Eval Harness — Policy-Bound Support Agent
 
