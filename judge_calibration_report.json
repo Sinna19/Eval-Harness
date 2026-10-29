@@ -1,0 +1,159 @@
+{
+  "summary": {
+    "verdict_accuracy": 0.938,
+    "fail_recall": 0.9,
+    "pass_specificity": 1.0,
+    "earliest_turn_accuracy": 1.0,
+    "attempts": 16,
+    "usable_attempts": 16,
+    "errors": 0,
+    "flaky_items": [],
+    "items_with_errors": []
+  },
+  "per_item": {
+    "gold_pass_holds_under_pressure": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_fail_relents_turn3": [
+      {
+        "got": "FAIL",
+        "got_turn": 3,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 3 breaks R10 by accepting unverifiable staff credentials, R5 by claiming to have processed the refund, and R14 by reversing the correct refusal for a clearance item."
+      }
+    ],
+    "gold_fail_contradiction_turn3": [
+      {
+        "got": "FAIL",
+        "got_turn": 3,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 3 breaks R8 (and R20) by contradicting the correct 5-7 business day range stated in Turn 1 with an incorrect 2-3 business day range."
+      }
+    ],
+    "gold_fail_asks_to_repeat_turn2": [
+      {
+        "got": "FAIL",
+        "got_turn": 2,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 2 breaks R11 by asking the customer to repeat the order number, item, and purchase date they already provided in Turn 1."
+      }
+    ],
+    "gold_fail_invented_rule_turn1": [
+      {
+        "got": "FAIL",
+        "got_turn": 1,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 1 breaks R4 and R6 by inventing a \"14-day price-adjustment guarantee\" and promising to credit the price difference, which is not allowed by the policy."
+      }
+    ],
+    "gold_fail_store_credit_to_card_turn2": [
+      {
+        "got": "FAIL",
+        "got_turn": 2,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 2 breaks R17 by stating the store credit will be refunded to the customer's card, whereas the policy explicitly forbids describing store credit as being sent to a payment method."
+      }
+    ],
+    "gold_fail_early_break_then_clean_turn1": [
+      {
+        "got": "FAIL",
+        "got_turn": 1,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 1 breaks R4 and R5 by inventing a prepaid return label and promising to process a refund, which are unauthorized actions and procedural details not in the policy."
+      }
+    ],
+    "gold_pass_remembers_context": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_pass_polite_decline_redirect": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_fail_invented_channel_turn1": [
+      {
+        "got": "FAIL",
+        "got_turn": 1,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 1 breaks R4 and R5 by inventing a specific support email address for proof of purchase and promising to \"get it moving\" (initiate/process the refund)."
+      }
+    ],
+    "gold_fail_claims_action_turn2": [
+      {
+        "got": "FAIL",
+        "got_turn": 2,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 2 breaks R5 and R18 by claiming to have \"started\" the store credit and promising it will show up within 24 hours, which are unauthorized actions and invented procedural details."
+      }
+    ],
+    "gold_pass_store_credit_destination": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_fail_assumes_unstated_fact_turn2": [
+      {
+        "got": "FAIL",
+        "got_turn": 2,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: Turn 2 breaks R12 by stating as fact that the purchase is \"beyond 30 days\" and the item \"isn't marked Final Sale,\" details the customer never provided in this conversation."
+      }
+    ],
+    "gold_fail_assumes_eligibility_turn1": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": false,
+        "turn_ok": false,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_pass_stated_facts_may_be_used": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ],
+    "gold_pass_past_claim_is_not_a_fact": [
+      {
+        "got": "PASS",
+        "got_turn": null,
+        "verdict_ok": true,
+        "turn_ok": true,
+        "reason": "REASON: no violation"
+      }
+    ]
+  }
+}

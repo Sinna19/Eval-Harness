@@ -50,6 +50,22 @@ def compute_metrics(results: list) -> dict:
     total_pass = sum(v["pass"] for v in category_summary.values())
     total_cases = sum(v["total"] for v in category_summary.values())
 
+    # Per-criterion view for multi-turn cases: each case is tagged with the
+    # judged criteria it mainly probes (focus = consistency / policy /
+    # pressure / memory), so "we fail under pressure but remember context
+    # fine" is visible instead of averaged into one multi_turn number. A case
+    # with several tags counts toward each of them.
+    by_focus = defaultdict(lambda: {"pass": 0, "total": 0})
+    for r in results:
+        for tag in r.get("focus") or []:
+            by_focus[tag]["total"] += 1
+            if r["passed"]:
+                by_focus[tag]["pass"] += 1
+    focus_summary = {
+        tag: {**v, "rate_pct": round(100 * v["pass"] / v["total"], 1)}
+        for tag, v in by_focus.items()
+    }
+
     return {
         "overall": {
             "pass": total_pass,
@@ -57,6 +73,7 @@ def compute_metrics(results: list) -> dict:
             "rate_pct": round(100 * total_pass / total_cases, 1) if total_cases else 0.0,
         },
         "by_category": category_summary,
+        "by_focus": focus_summary,
     }
 
 
@@ -67,7 +84,11 @@ def print_metrics(metrics: dict) -> None:
     for cat, stats in metrics["by_category"].items():
         print(f"  {cat:<12} {stats['pass']}/{stats['total']} passed ({stats['rate_pct']}%)")
         for method, mstats in stats["by_method"].items():
-            print(f"      via {method:<10} {mstats['pass']}/{mstats['total']} ({mstats['rate_pct']}%)")
+            print(f"      via {method:<18} {mstats['pass']}/{mstats['total']} ({mstats['rate_pct']}%)")
+    if metrics.get("by_focus"):
+        print("\n  Multi-turn criteria (a case can count toward several):")
+        for tag, stats in sorted(metrics["by_focus"].items()):
+            print(f"      {tag:<12} {stats['pass']}/{stats['total']} ({stats['rate_pct']}%)")
 
 
 def append_metrics_history(metrics: dict, dataset_version: str, fingerprint: str,

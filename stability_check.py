@@ -55,13 +55,25 @@ def run_multiple(n_runs: int):
 def aggregate(all_runs):
     """
     Builds a per-case stability summary:
-      { case_id: {"passes": int, "total": int, "outcomes": [bool, ...]} }
+      { case_id: {"passes": int, "total": int, "errors": int,
+                  "outcomes": [True | False | "error", ...]} }
+
+    A row with method == "error" means the API call (or scoring call) itself
+    failed -- rate limit, daily token cap, network -- so the agent was never
+    actually judged. Counting that as a failure would make an infrastructure
+    problem look like the agent got worse (found for real: eight of the
+    nine heaviest cases "failed" only in the last run). Errors are therefore
+    tracked separately: `total` and `passes` cover judged runs only.
     """
-    by_case = defaultdict(lambda: {"passes": 0, "total": 0, "outcomes": []})
+    by_case = defaultdict(lambda: {"passes": 0, "total": 0, "errors": 0, "outcomes": []})
 
     for run_results in all_runs:
         for r in run_results:
             entry = by_case[r["id"]]
+            if r.get("method") == "error":
+                entry["errors"] += 1
+                entry["outcomes"].append("error")
+                continue
             entry["total"] += 1
             entry["outcomes"].append(r["passed"])
             if r["passed"]:
@@ -78,30 +90,45 @@ def print_summary(by_case, n_runs):
     # Keep the original test_cases.py ordering for readability.
     case_order = [c["id"] for c in TEST_CASES]
 
-    unstable = []
+    unstable, inconclusive = [], []
     for case_id in case_order:
         stats = by_case.get(case_id)
         if not stats:
             continue
+        if stats["errors"]:
+            inconclusive.append((case_id, stats))
+        if stats["total"] == 0:
+            print(f"?  {case_id:<28} no judged runs ({stats['errors']} errored)")
+            continue
         rate = 100 * stats["passes"] / stats["total"]
         marker = "  " if rate in (0, 100) else "⚠️ "
-        print(f"{marker}{case_id:<28} {stats['passes']}/{stats['total']} passed ({rate:.0f}%)")
+        err_note = f"  [+{stats['errors']} errored]" if stats["errors"] else ""
+        print(f"{marker}{case_id:<28} {stats['passes']}/{stats['total']} passed ({rate:.0f}%){err_note}")
         if rate not in (0, 100):
             unstable.append((case_id, stats))
 
     print()
+    if inconclusive:
+        print(f"{len(inconclusive)} case(s) had runs that ERRORED (API/rate-limit/token cap) "
+              f"and were excluded from the rates above -- not agent failures:")
+        for case_id, stats in inconclusive:
+            print(f"  - {case_id}: {stats['outcomes']}")
+        print("If errors cluster in the last run(s), you hit a quota: wait for it to reset, "
+              "raise CASE_DELAY_SECONDS, or run fewer --runs at a time.\n")
     if unstable:
-        print(f"{len(unstable)} case(s) gave DIFFERENT results across identical runs "
+        print(f"{len(unstable)} case(s) gave DIFFERENT results across identical judged runs "
               f"-- these are not reliably fixed, they're flaky:")
         for case_id, stats in unstable:
             print(f"  - {case_id}: {stats['outcomes']}")
         print("\nConsider this a signal to tighten the policy or the test case itself, "
               "not just re-running until it happens to pass.")
-    else:
+    elif not inconclusive:
         print("All cases gave the SAME result on every run. "
               "No flakiness detected across this sample size.")
         print("(Note: this doesn't prove zero flakiness -- only that none showed up "
               "in this many runs. A rare flip could still exist.)")
+    else:
+        print("No flakiness among the judged runs (some runs errored, see above).")
 
 
 def save_report(all_runs, by_case, target_runs, path="stability_report.json"):
@@ -112,7 +139,9 @@ def save_report(all_runs, by_case, target_runs, path="stability_report.json"):
             case_id: {
                 "passes": stats["passes"],
                 "total": stats["total"],
-                "pass_rate_pct": round(100 * stats["passes"] / stats["total"], 1),
+                "errors": stats["errors"],
+                "pass_rate_pct": (round(100 * stats["passes"] / stats["total"], 1)
+                                  if stats["total"] else None),
                 "outcomes": stats["outcomes"],
             }
             for case_id, stats in by_case.items()
