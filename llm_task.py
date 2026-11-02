@@ -120,7 +120,14 @@ def _record_usage(model: str, response, latency_s: float) -> None:
     # are counted as unpriced rather than silently reported as free.
     priced = model in litellm.model_cost
     try:
-        cost = float(litellm.completion_cost(completion_response=response, model=model)) if priced else 0.0
+        # Pass the provider explicitly. Groq reports nested model names like
+        # "openai/gpt-oss-120b" in its responses, and without this LiteLLM's
+        # cost lookup infers provider "openai" from that prefix and fails --
+        # found for real: every agent call came back unpriced on the first
+        # live run, while the judge (qwen/..., no openai/ prefix) was priced.
+        provider = litellm.get_llm_provider(model)[1]
+        cost = float(litellm.completion_cost(completion_response=response, model=model,
+                                             custom_llm_provider=provider)) if priced else 0.0
     except Exception:
         cost, priced = 0.0, False
 

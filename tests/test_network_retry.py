@@ -145,6 +145,19 @@ class TestUsageMetering(unittest.TestCase):
                                usage["by_role"]["sut"]["cost_usd"]
                                + usage["by_role"]["judge"]["cost_usd"])
 
+    def test_groq_nested_openai_model_name_is_still_priced(self):
+        # Regression: a real Groq response says model="openai/gpt-oss-120b"
+        # and carries no provider hint we can rely on; cost lookup must not
+        # wander off to OpenAI's price table and come back unpriced.
+        response = fake_response()
+        response._hidden_params = {}
+        completion = mock.Mock(return_value=response)
+        with mock.patch.object(llm_task.litellm, "completion", completion):
+            with llm_task.track_usage() as usage:
+                llm_task.call_llm("sys", "hi", model="groq/openai/gpt-oss-120b")
+        self.assertEqual(usage["unpriced_calls"], 0)
+        self.assertGreater(usage["cost_usd"], 0)
+
     def test_unpriced_model_counts_as_zero_not_a_crash(self):
         completion = mock.Mock(return_value=fake_response())
         with mock.patch.object(llm_task.litellm, "completion", completion), \

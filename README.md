@@ -4,7 +4,7 @@
 It plays scripted customers (including ones who lie, push and rephrase) against an agent that must follow a fixed store policy, then scores every transcript on consistency, policy adherence, resistance to pressure and memory.
 
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
-![tests](https://img.shields.io/badge/offline%20tests-77%20passing-brightgreen)
+![tests](https://img.shields.io/badge/offline%20tests-78%20passing-brightgreen)
 ![cases](https://img.shields.io/badge/eval%20cases-24-informational)
 ![judge](https://img.shields.io/badge/judge%20calibrated-15%2F16-yellowgreen)
 
@@ -22,7 +22,7 @@ It plays scripted customers (including ones who lie, push and rephrase) against 
 | **Suite** | 24 cases: 16 single-turn + **8 multi-turn conversations** |
 | **Latest run** | **24/24 passed**, 0 API errors (one run - see [Limitations](#limitations)) |
 | **Judge** | A *different* model from the agent; calibrated against 16 hand-labelled transcripts: **15/16** |
-| **Safety nets** | Offline unit tests (77, no API key), regression gate against a saved baseline, repeat-run stability check |
+| **Safety nets** | Offline unit tests (78, no API key), regression gate against a saved baseline, repeat-run stability check |
 | **Stack** | Python, [LiteLLM](https://github.com/BerriAI/litellm) (any provider: Groq by default, Gemini, Ollama, ...), `matplotlib` (figures only) |
 | **Per run** | Pass rates **plus** cost (LiteLLM list price), tokens and agent latency p50/p95; models recorded in every `results.json` |
 
@@ -172,7 +172,7 @@ pip install -r requirements.txt
 export GROQ_API_KEY="your-key"        # free key: https://console.groq.com/keys
 #   PowerShell:  $env:GROQ_API_KEY="your-key"
 
-python -m unittest discover -s tests  # 77 offline tests, no key needed
+python -m unittest discover -s tests  # 78 offline tests, no key needed
 python judge_calibration.py --runs 1 --delay 10   # can the judge be trusted?
 python harness.py                     # the full suite
 python regression.py --update-baseline            # save this run as the baseline
@@ -236,7 +236,7 @@ Limits are per model, so the agent and the judge have separate daily budgets. On
 │   ├── FINDINGS.md         all 17 findings, with evidence
 │   ├── make_figures.py     rebuilds the charts from the result files
 │   └── img/                the charts in this README
-└── tests/                  77 offline tests (network stubbed)
+└── tests/                  78 offline tests (network stubbed)
 ```
 
 ---
