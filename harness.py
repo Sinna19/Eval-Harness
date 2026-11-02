@@ -17,13 +17,25 @@ It will:
      a given result belongs to
   5. Append one entry to metrics_history.json so category pass rates are
      trackable across runs over time, not just visible one run at a time
+
+Every result row also carries what the case cost (LiteLLM list price),
+tokens used, and the agent's latency, and results.json records which agent
+and judge models produced it. Pick models without code changes:
+
+    python harness.py --sut-model groq/openai/gpt-oss-20b --out runs/gpt-oss-20b
+    python harness.py --cases normal_1,mt_authority_audit_pressure
 """
 
+import argparse
 import csv
 import json
+import os
+import sys
 import time
+from importlib.metadata import version, PackageNotFoundError
 
-from llm_task import support_agent_reply, support_agent_chat_reply
+import llm_task
+from llm_task import support_agent_reply, support_agent_chat_reply, track_usage
 from test_cases import TEST_CASES, DATASET_VERSION, dataset_fingerprint, is_conversation
 from scoring import score_case, score_conversation
 from metrics import compute_metrics, print_metrics, append_metrics_history
@@ -75,8 +87,33 @@ def play_conversation(case: dict) -> tuple[list, str | None]:
     return transcript, None
 
 
+def _usage_fields(usage: dict) -> dict:
+    """Flat per-row usage columns (same keys on every row, see _row)."""
+    sut, judge = usage["by_role"]["sut"], usage["by_role"]["judge"]
+    return {
+        "llm_calls": usage["calls"],
+        "prompt_tokens": usage["prompt_tokens"],
+        "completion_tokens": usage["completion_tokens"],
+        "cost_usd": round(usage["cost_usd"], 6),
+        "sut_cost_usd": round(sut["cost_usd"], 6),
+        "judge_cost_usd": round(judge["cost_usd"], 6),
+        # Mean latency of the agent's calls in this case (one per turn), so
+        # long multi-turn cases aren't penalized just for having more turns.
+        "sut_latency_s": round(sut["latency_s"] / sut["calls"], 3) if sut["calls"] else None,
+        "unpriced_calls": usage["unpriced_calls"],
+    }
+
+
 def run_one_case(case: dict) -> dict:
-    """Runs and scores a single case (either shape) and returns its row."""
+    """Runs and scores a single case (either shape) and returns its row,
+    including what the case cost and how fast the agent answered."""
+    with track_usage() as usage:
+        row = _run_and_score(case)
+    row.update(_usage_fields(usage))
+    return row
+
+
+def _run_and_score(case: dict) -> dict:
     if is_conversation(case):
         transcript, err = play_conversation(case)
         last_reply = next((m["content"] for m in reversed(transcript) if m["role"] == "ai"), "")
@@ -157,20 +194,37 @@ def summarize(results):
     return metrics
 
 
-def save_results(results):
-    meta = {
+def run_metadata() -> dict:
+    """What produced a results file: dataset AND models, so two results
+    files can't be silently compared across different agents or judges."""
+    try:
+        litellm_version = version("litellm")
+    except PackageNotFoundError:
+        litellm_version = None
+    return {
         "dataset_version": DATASET_VERSION,
         "dataset_fingerprint": dataset_fingerprint(),
+        "sut_model": llm_task.SUT_MODEL,
+        "judge_model": llm_task.JUDGE_MODEL,
+        "litellm_version": litellm_version,
     }
-    metrics = compute_metrics(results)
 
-    with open("results.json", "w", encoding="utf-8") as f:
+
+def save_results(results, out_dir: str = "."):
+    meta = run_metadata()
+    metrics = compute_metrics(results)
+    os.makedirs(out_dir, exist_ok=True)
+    results_json = os.path.join(out_dir, "results.json")
+    results_csv = os.path.join(out_dir, "results.csv")
+    history = os.path.join(out_dir, "metrics_history.json")
+
+    with open(results_json, "w", encoding="utf-8") as f:
         # ensure_ascii=False so smart quotes/dashes in model replies write as
         # actual UTF-8 characters instead of \uXXXX escape codes -- the file
         # is already opened with encoding="utf-8" so this is safe to read back.
         json.dump({"meta": meta, "results": results}, f, indent=2, ensure_ascii=False)
 
-    with open("results.csv", "w", newline="", encoding="utf-8") as f:
+    with open(results_csv, "w", newline="", encoding="utf-8") as f:
         # Union of keys across ALL rows (not just row 0), and list/dict
         # values (transcript, focus) JSON-encoded so each fits one cell.
         fieldnames = list(dict.fromkeys(k for r in results for k in r))
@@ -182,14 +236,50 @@ def save_results(results):
                 for k, v in r.items()
             })
 
-    append_metrics_history(metrics, meta["dataset_version"], meta["dataset_fingerprint"])
+    append_metrics_history(metrics, meta["dataset_version"], meta["dataset_fingerprint"],
+                           path=history, models={"sut_model": meta["sut_model"],
+                                                 "judge_model": meta["judge_model"]})
 
-    print("\nSaved results.json and results.csv (dataset version "
-          f"{meta['dataset_version']} / {meta['dataset_fingerprint']}), "
-          "appended a summary to metrics_history.json")
+    print(f"\nSaved {results_json} and {results_csv} (dataset version "
+          f"{meta['dataset_version']} / {meta['dataset_fingerprint']}, "
+          f"agent {meta['sut_model']}, judge {meta['judge_model']}), "
+          f"appended a summary to {history}")
+
+
+def _parse_args(argv=None):
+    ap = argparse.ArgumentParser(description="Run the eval suite.")
+    ap.add_argument("--sut-model", help="LiteLLM model string for the agent (overrides SUT_MODEL)")
+    ap.add_argument("--judge-model", help="LiteLLM model string for the judge (overrides JUDGE_MODEL)")
+    ap.add_argument("--cases", help="comma-separated case ids to run instead of the full suite")
+    ap.add_argument("--out", default=".", help="directory for results.json/csv and metrics_history.json")
+    return ap.parse_args(argv)
 
 
 if __name__ == "__main__":
-    all_results = run_suite()
+    args = _parse_args()
+    # Models are read at import time by llm_task and scoring, so CLI
+    # overrides are applied by re-running this script with the env var set.
+    # Keeps one source of truth (the env) instead of patching module globals.
+    # (subprocess rather than os.execv, which misbehaves on Windows consoles.)
+    overrides = {k: v for k, v in (("SUT_MODEL", args.sut_model),
+                                   ("JUDGE_MODEL", args.judge_model)) if v}
+    if any(os.environ.get(k) != v for k, v in overrides.items()):
+        import subprocess
+        sys.exit(subprocess.run([sys.executable, *sys.argv],
+                                env={**os.environ, **overrides}).returncode)
+
+    if llm_task.SUT_MODEL == llm_task.JUDGE_MODEL:
+        print(f"WARNING: agent and judge are the same model ({llm_task.SUT_MODEL}); "
+              "expect self-preferencing bias in judged cases.")
+
+    cases = TEST_CASES
+    if args.cases:
+        wanted = [c.strip() for c in args.cases.split(",") if c.strip()]
+        unknown = sorted(set(wanted) - {c["id"] for c in TEST_CASES})
+        if unknown:
+            sys.exit(f"unknown case id(s): {unknown}")
+        cases = [c for c in TEST_CASES if c["id"] in wanted]
+
+    all_results = run_cases(cases)
     summarize(all_results)
-    save_results(all_results)
+    save_results(all_results, out_dir=args.out)

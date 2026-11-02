@@ -67,6 +67,7 @@ def compute_metrics(results: list) -> dict:
     }
 
     return {
+        "usage": usage_summary(results),
         "overall": {
             "pass": total_pass,
             "total": total_cases,
@@ -74,6 +75,38 @@ def compute_metrics(results: list) -> dict:
         },
         "by_category": category_summary,
         "by_focus": focus_summary,
+    }
+
+
+def _percentile(values: list, pct: float):
+    if not values:
+        return None
+    ordered = sorted(values)
+    idx = min(len(ordered) - 1, max(0, round(pct / 100 * (len(ordered) - 1))))
+    return ordered[idx]
+
+
+def usage_summary(results: list) -> dict | None:
+    """Cost / token / latency roll-up across a run. Rows from before LiteLLM
+    metering (no cost_usd field) are ignored, so old result files still load.
+    Error rows are included in cost (a retried-then-failed case still spent
+    tokens) but excluded from latency (they never got a real answer)."""
+    metered = [r for r in results if "cost_usd" in r]
+    if not metered:
+        return None
+    latencies = [r["sut_latency_s"] for r in metered
+                 if r.get("sut_latency_s") is not None and r.get("method") != "error"]
+    return {
+        "cost_usd": round(sum(r["cost_usd"] for r in metered), 6),
+        "sut_cost_usd": round(sum(r.get("sut_cost_usd", 0) for r in metered), 6),
+        "judge_cost_usd": round(sum(r.get("judge_cost_usd", 0) for r in metered), 6),
+        "llm_calls": sum(r.get("llm_calls", 0) for r in metered),
+        "prompt_tokens": sum(r.get("prompt_tokens", 0) for r in metered),
+        "completion_tokens": sum(r.get("completion_tokens", 0) for r in metered),
+        "unpriced_calls": sum(r.get("unpriced_calls", 0) for r in metered),
+        "sut_latency_p50_s": _percentile(latencies, 50),
+        "sut_latency_p95_s": _percentile(latencies, 95),
+        "errors": sum(1 for r in metered if r.get("method") == "error"),
     }
 
 
@@ -89,10 +122,22 @@ def print_metrics(metrics: dict) -> None:
         print("\n  Multi-turn criteria (a case can count toward several):")
         for tag, stats in sorted(metrics["by_focus"].items()):
             print(f"      {tag:<12} {stats['pass']}/{stats['total']} ({stats['rate_pct']}%)")
+    usage = metrics.get("usage")
+    if usage:
+        print(f"\n  Cost (LiteLLM list price): ${usage['cost_usd']:.4f} "
+              f"(agent ${usage['sut_cost_usd']:.4f}, judge ${usage['judge_cost_usd']:.4f}) "
+              f"over {usage['llm_calls']} calls, "
+              f"{usage['prompt_tokens'] + usage['completion_tokens']:,} tokens")
+        if usage["unpriced_calls"]:
+            print(f"      {usage['unpriced_calls']} call(s) to models without pricing data counted as $0")
+        if usage["sut_latency_p50_s"] is not None:
+            print(f"  Agent latency per reply: p50 {usage['sut_latency_p50_s']:.2f}s, "
+                  f"p95 {usage['sut_latency_p95_s']:.2f}s")
 
 
 def append_metrics_history(metrics: dict, dataset_version: str, fingerprint: str,
-                            path: str = "metrics_history.json") -> None:
+                            path: str = "metrics_history.json",
+                            models: dict | None = None) -> None:
     """Appends one timestamped entry per harness run, tagged with the
     dataset version/fingerprint that produced it, so category pass rates
     can be compared across runs and across dataset changes over time."""
@@ -100,6 +145,7 @@ def append_metrics_history(metrics: dict, dataset_version: str, fingerprint: str
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "dataset_version": dataset_version,
         "dataset_fingerprint": fingerprint,
+        **(models or {}),
         "metrics": metrics,
     }
 

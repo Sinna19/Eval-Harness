@@ -1,1 +1,1 @@
-requests
+litellm>=1.106,<2

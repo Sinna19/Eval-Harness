@@ -4,7 +4,7 @@
 It plays scripted customers (including ones who lie, push and rephrase) against an agent that must follow a fixed store policy, then scores every transcript on consistency, policy adherence, resistance to pressure and memory.
 
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
-![tests](https://img.shields.io/badge/offline%20tests-62%20passing-brightgreen)
+![tests](https://img.shields.io/badge/offline%20tests-77%20passing-brightgreen)
 ![cases](https://img.shields.io/badge/eval%20cases-24-informational)
 ![judge](https://img.shields.io/badge/judge%20calibrated-15%2F16-yellowgreen)
 
@@ -22,8 +22,9 @@ It plays scripted customers (including ones who lie, push and rephrase) against 
 | **Suite** | 24 cases: 16 single-turn + **8 multi-turn conversations** |
 | **Latest run** | **24/24 passed**, 0 API errors (one run - see [Limitations](#limitations)) |
 | **Judge** | A *different* model from the agent; calibrated against 16 hand-labelled transcripts: **15/16** |
-| **Safety nets** | Offline unit tests (62, no API key), regression gate against a saved baseline, repeat-run stability check |
-| **Stack** | Python, Groq-hosted open models, `requests`, `matplotlib` (figures only) |
+| **Safety nets** | Offline unit tests (77, no API key), regression gate against a saved baseline, repeat-run stability check |
+| **Stack** | Python, [LiteLLM](https://github.com/BerriAI/litellm) (any provider: Groq by default, Gemini, Ollama, ...), `matplotlib` (figures only) |
+| **Per run** | Pass rates **plus** cost (LiteLLM list price), tokens and agent latency p50/p95; models recorded in every `results.json` |
 
 ---
 
@@ -171,7 +172,7 @@ pip install -r requirements.txt
 export GROQ_API_KEY="your-key"        # free key: https://console.groq.com/keys
 #   PowerShell:  $env:GROQ_API_KEY="your-key"
 
-python -m unittest discover -s tests  # 62 offline tests, no key needed
+python -m unittest discover -s tests  # 77 offline tests, no key needed
 python judge_calibration.py --runs 1 --delay 10   # can the judge be trusted?
 python harness.py                     # the full suite
 python regression.py --update-baseline            # save this run as the baseline
@@ -184,9 +185,26 @@ python regression.py --update-baseline            # save this run as the baselin
 | `python judge_calibration.py` | Grade the judge on 16 gold transcripts | 0 | 16 |
 | `python regression.py` | Fail if any baseline-passing case now fails | 45 | 19 |
 | `python stability_check.py --runs 3` | Repeat the suite, flag cases that flip | 45 x N | 19 x N |
+| `python compare_models.py <model> <model> ...` | Same suite, same judge, one row per agent model: pass rate, cost, latency | 45 x N | 19 x N |
 | `pip install matplotlib` then `python docs/make_figures.py` | Rebuild the charts above from the JSON files | 0 | 0 |
 
-Override models with `SUT_MODEL` and `JUDGE_MODEL`. The judge defaults to a different model family from the agent on purpose.
+### Choosing models
+
+All model calls go through [LiteLLM](https://docs.litellm.ai/docs/providers), so the agent and the judge can each be any provider it supports, picked by model string alone:
+
+```bash
+python harness.py --sut-model groq/openai/gpt-oss-20b          # or SUT_MODEL=... env var
+python harness.py --judge-model gemini/gemini-2.5-flash         # judge from a different provider (needs GEMINI_API_KEY)
+python harness.py --sut-model ollama/llama3.2 --cases normal_1  # local model, no key
+python harness.py --out runs/my-experiment                      # keep results apart from the default files
+
+# cheap trial on two cases first, then drop --cases for the full suite
+python compare_models.py groq/openai/gpt-oss-20b groq/openai/gpt-oss-120b --cases normal_1,mt_authority_audit_pressure
+```
+
+`compare_models.py` keeps the judge fixed across rows (a changing grader would make the comparison meaningless), refuses to let a model grade itself, and writes `runs/comparison.md`. Defaults are `groq/openai/gpt-oss-120b` (agent) and `groq/qwen/qwen3.8-27b` (judge). Old-style bare Groq ids such as `SUT_MODEL=openai/gpt-oss-120b` still work: they are routed to Groq, not OpenAI.
+
+Every result row carries `cost_usd` (split into agent and judge), token counts and `sut_latency_s`. Cost is LiteLLM's list price for the tokens used: on a free tier nothing is billed, but it shows what the run would cost at scale. Models without pricing data (e.g. local Ollama) are counted as $0 and flagged, not silently treated as free. Retries are done by the harness itself (LiteLLM's internal retries are off), so backoff behaves the same on every provider.
 
 ### Free-tier budget (Groq)
 
@@ -203,7 +221,8 @@ Limits are per model, so the agent and the judge have separate daily budgets. On
 ```text
 .
 ├── harness.py              run the suite, write results + metrics history
-├── llm_task.py             the agent under test + the API client (retries, backoff)
+├── llm_task.py             the agent under test + the LiteLLM model layer (retries, cost/latency metering)
+├── compare_models.py       run several agent models under one judge, one comparison table
 ├── policy.py               R1-R22 business rules + S1-S5 style guide, assembled per audience
 ├── scoring.py              rule-based, gates, single-reply judge, conversation judge
 ├── test_cases.py           24 cases (+ CHANGELOG_TESTCASES.md, dataset fingerprint)
@@ -217,7 +236,7 @@ Limits are per model, so the agent and the judge have separate daily budgets. On
 │   ├── FINDINGS.md         all 17 findings, with evidence
 │   ├── make_figures.py     rebuilds the charts from the result files
 │   └── img/                the charts in this README
-└── tests/                  62 offline tests (network stubbed)
+└── tests/                  77 offline tests (network stubbed)
 ```
 
 ---
@@ -230,7 +249,7 @@ Stated plainly, because an eval that hides its blind spots is not worth much.
 - **Scripted customers cannot adapt.** A real adversary changes tactics after a "no"; these scripts escalate regardless of what the agent said.
 - **The judge has a measured blind spot** (confident eligibility on unstated facts), covered only for cases that carry a gate.
 - **The four criteria do not measure helpfulness.** An agent that holds the policy but never acknowledges a manager's claim still passes (finding 15).
-- **Judge and agent share a provider.** Different model families, but both on Groq, so shared serving quirks are not ruled out.
+- **Judge and agent share a provider by default.** Different model families, but both on Groq, so shared serving quirks are not ruled out. The harness can now use a judge from another provider (`--judge-model gemini/...`); its calibration on `judge_calibration.py` has not been run yet.
 - **Small samples.** 24 cases, 1-3 runs per claim; `judge_calibration.py` has 16 items.
 - **Free-tier quotas** limit how often the full suite can run per day.
 
@@ -238,6 +257,6 @@ Stated plainly, because an eval that hides its blind spots is not worth much.
 
 - [ ] 4-6 **held-out cases** written blind, to test generalization
 - [ ] An **LLM-played customer** that adapts to the agent's replies
-- [ ] A judge from a **different provider**
+- [ ] A judge from a **different provider** (supported via LiteLLM; needs a calibration run before trusting it)
 - [ ] Give the agent a small **order-lookup tool** and test that it uses real facts instead of assuming them
-- [ ] Record agent/judge model and policy version in each `results.json`
+- [x] Record agent/judge model in each `results.json` (policy version still to do)
