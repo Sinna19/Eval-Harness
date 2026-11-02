@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 graphify-out/
+
+# per-model runs from compare_models.py
+runs/
