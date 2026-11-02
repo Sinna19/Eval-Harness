@@ -110,26 +110,44 @@ def _role_of(model: str) -> str:
     return "other"
 
 
+def _response_cost(model: str, response) -> tuple[float, bool]:
+    """Returns (cost_usd, priced) for one completion.
+
+    Models missing from LiteLLM's pricing map (e.g. a local Ollama model)
+    are counted as unpriced rather than silently reported as free.
+
+    For priced models, the primary source is the cost LiteLLM computes
+    itself during the call (response._hidden_params["response_cost"]): it
+    is the number LiteLLM's own spend tracking uses, and it handles cached
+    and reasoning tokens. Recomputing it with completion_cost() is only a
+    fallback, and needs the provider passed explicitly: Groq responses
+    report nested model names like "openai/gpt-oss-120b" with no provider
+    hint, so completion_cost() would infer provider "openai" from that
+    prefix and fail. Found for real on the first live run, then confirmed
+    against a live Groq response: response_cost was set, provider hint
+    was None, bare completion_cost() raised."""
+    if model not in litellm.model_cost:
+        return 0.0, False
+
+    built_in = (getattr(response, "_hidden_params", None) or {}).get("response_cost")
+    if isinstance(built_in, (int, float)):
+        return float(built_in), True
+
+    try:
+        provider = litellm.get_llm_provider(model)[1]
+        return float(litellm.completion_cost(completion_response=response, model=model,
+                                             custom_llm_provider=provider)), True
+    except Exception:
+        return 0.0, False
+
+
 def _record_usage(model: str, response, latency_s: float) -> None:
     if not _usage_stack:
         return
     usage = getattr(response, "usage", None)
     prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
     completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-    # Models missing from LiteLLM's pricing map (e.g. a local Ollama model)
-    # are counted as unpriced rather than silently reported as free.
-    priced = model in litellm.model_cost
-    try:
-        # Pass the provider explicitly. Groq reports nested model names like
-        # "openai/gpt-oss-120b" in its responses, and without this LiteLLM's
-        # cost lookup infers provider "openai" from that prefix and fails --
-        # found for real: every agent call came back unpriced on the first
-        # live run, while the judge (qwen/..., no openai/ prefix) was priced.
-        provider = litellm.get_llm_provider(model)[1]
-        cost = float(litellm.completion_cost(completion_response=response, model=model,
-                                             custom_llm_provider=provider)) if priced else 0.0
-    except Exception:
-        cost, priced = 0.0, False
+    cost, priced = _response_cost(model, response)
 
     role = _role_of(model)
     for record in _usage_stack:

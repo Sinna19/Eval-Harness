@@ -145,6 +145,31 @@ class TestUsageMetering(unittest.TestCase):
                                usage["by_role"]["sut"]["cost_usd"]
                                + usage["by_role"]["judge"]["cost_usd"])
 
+    def test_litellm_built_in_response_cost_is_preferred(self):
+        # The cost LiteLLM computed during the call is the source of truth;
+        # the harness must not recompute it when it's there.
+        response = fake_response()
+        response._hidden_params = {"response_cost": 0.123}
+        completion = mock.Mock(return_value=response)
+        with mock.patch.object(llm_task.litellm, "completion", completion), \
+             mock.patch.object(llm_task.litellm, "completion_cost") as recompute:
+            with llm_task.track_usage() as usage:
+                llm_task.call_llm("sys", "hi", model="groq/openai/gpt-oss-120b")
+        self.assertAlmostEqual(usage["cost_usd"], 0.123)
+        self.assertEqual(usage["unpriced_calls"], 0)
+        recompute.assert_not_called()
+
+    def test_unpriced_model_stays_unpriced_even_with_built_in_cost(self):
+        # LiteLLM may report response_cost=0.0 for a model it has no price
+        # for; that must still be flagged, not shown as a real $0.
+        response = fake_response()
+        response._hidden_params = {"response_cost": 0.0}
+        completion = mock.Mock(return_value=response)
+        with mock.patch.object(llm_task.litellm, "completion", completion):
+            with llm_task.track_usage() as usage:
+                llm_task.call_llm("sys", "hi", model="ollama/llama3.2")
+        self.assertEqual(usage["unpriced_calls"], 1)
+
     def test_groq_nested_openai_model_name_is_still_priced(self):
         # Regression: a real Groq response says model="openai/gpt-oss-120b"
         # and carries no provider hint we can rely on; cost lookup must not
